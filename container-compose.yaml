@@ -1,0 +1,32 @@
+services:
+  # 1. Your Django Application
+  budget-web:
+    container_name: budget-app-server
+    image: localhost/projectmanagement:latest
+    ports:
+      - "8003:8003" # Expose to host so you can view it in your browser
+    environment:
+      - DEBUG=1
+      # ... other Django environment variables ...
+    # Add your database service here as a dependency if you are using Postgres/MySQL
+    # depends_on:
+    #   - db 
+    volumes:
+      - ./data:/data/vmb
+
+  # 2. Your MCP Server
+  mcp-server:
+    container_name: budget-mcp-server
+    image: localhost/budget-mcp:latest
+    ports:
+      # Map the MCP server port to your local machine
+      - "8004:8080"
+    environment:
+      # Crucial change: We now point to the 'django-web' service name on port 8000
+      - DJANGO_API_URL=http://budget-app-server:8003/api
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - budget-web
+    stdin_open: true 
+    tty: false
+    

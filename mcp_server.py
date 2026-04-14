@@ -1,0 +1,125 @@
+import httpx
+from mcp.server.fastmcp import FastMCP
+
+# Initialize the FastMCP server
+mcp = FastMCP("BudgetAppServer", host="0.0.0.0", port=8080)
+
+# URL to your Django API
+DJANGO_API_URL = "http://budget-app-server:8003/api"
+
+# Include authentication if you set it up in Django
+HEADERS = {} 
+# HEADERS = {"Authorization": "Token YOUR_SECRET_API_TOKEN"} 
+
+@mcp.tool()
+async def get_project_details(oracle_id: int) -> str:
+    """Fetch the core details (name, budget, used hours) for a specific project by ID."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DJANGO_API_URL}/projects/{oracle_id}/", 
+            headers=HEADERS
+        )
+        if response.status_code == 200:
+            data = response.json()
+            # If you used Method 2 (adding the field to the ProjectSerializer), 
+            # you can include it right here:
+            calc_hours = data.get('calculated_total_hours', 'Not calculated')
+            return f"Project: {data['name']}, Budget: {data['calculated_total_hours']}h, Logged via Timecards: {calc_hours}h"
+        return f"Error fetching project: {response.status_code}"
+
+@mcp.tool()
+async def get_project_timecards(project_id: int) -> str:
+    """Fetch a list of all timecard items logged against a specific project ID."""
+    async with httpx.AsyncClient() as client:
+        # We use the filter functionality we added to the ViewSet via the query parameter
+        response = await client.get(
+            f"{DJANGO_API_URL}/timecards/?project={project_id}", 
+            headers=HEADERS
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # DRF might paginate the results (wrap them in a 'results' key). 
+            # We handle both paginated and unpaginated responses here.
+            items = data.get('results', data) if isinstance(data, dict) else data
+            
+            if not items:
+                return f"No timecards found for project ID {project_id}."
+            
+            # Format the output nicely for the AI to read
+            formatted_timecards = []
+            for item in items:
+                formatted_timecards.append(
+                    f"- {item['timecard_id']}: {item['total_hours']}h by {item['name']} "
+                    f"on {item['start_date']} (Milestone: {item['milestone']}, Team: {item['team']})"
+                )
+            return "\n".join(formatted_timecards)
+            
+        return f"Error fetching timecards: {response.status_code}"
+
+@mcp.tool()
+async def get_project_total_hours(project_id: int) -> str:
+    """Fetch the dynamically calculated sum of all timecard hours for a specific project ID."""
+    # NOTE: Use this tool if you implemented Method 1 (the custom @action in views.py).
+    # If you used Method 2 (added it to the Serializer), this tool is unnecessary!
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DJANGO_API_URL}/projects/{project_id}/total_hours/", 
+            headers=HEADERS
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return f"The total summed timecard hours for {data['project_name']} is {data['total_timecard_hours']}h."
+        return f"Error fetching total hours: {response.status_code}"
+
+@mcp.tool()
+async def list_project_groups() -> str:
+    """Fetch a list of all project groups, including the total summed hours for each group."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DJANGO_API_URL}/project-groups/", 
+            headers=HEADERS
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Handle both paginated and unpaginated DRF responses
+            items = data.get('results', data) if isinstance(data, dict) else data
+            
+            if not items:
+                return "No project groups found."
+            
+            # Format the list for Cursor AI
+            formatted_groups = []
+            for item in items:
+                calc_hours = item.get('calculated_total_hours', 'Not calculated')
+                formatted_groups.append(
+                    f"- ID {item['id']}: {item['name']} | Total Logged: {calc_hours}h"
+                )
+            return "\n".join(formatted_groups)
+            
+        return f"Error fetching project groups: {response.status_code}"
+
+@mcp.tool()
+async def get_project_group_details(group_id: int) -> str:
+    """Fetch the specific details and total calculated hours for a single project group by its ID."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DJANGO_API_URL}/project-groups/{group_id}/", 
+            headers=HEADERS
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            calc_hours = data.get('calculated_total_hours', 'Not calculated')
+            
+            return f"Project Group: {data['name']} (ID: {data['id']})\nTotal Hours Across All Projects: {calc_hours}h"
+            
+        return f"Error fetching project group: {response.status_code}"
+    
+
+if __name__ == "__main__":
+    # Change transport from stdio to SSE, and bind to 0.0.0.0 for Docker
+    mcp.run(transport="sse")
