@@ -1,11 +1,12 @@
 import httpx
+import os
 from mcp.server.fastmcp import FastMCP
 
 # Initialize the FastMCP server
 mcp = FastMCP("BudgetAppServer", host="0.0.0.0", port=8080)
 
 # URL to your Django API
-DJANGO_API_URL = "http://budget-app-server:8003/api"
+DJANGO_API_URL = os.environ.get("DJANGO_API_URL", "http://127.0.0.1:8000/api")
 
 # Include authentication if you set it up in Django
 HEADERS = {} 
