@@ -118,7 +118,36 @@ async def get_project_group_details(group_id: int) -> str:
             return f"Project Group: {data['name']} (ID: {data['id']})\nTotal Hours Across All Projects: {calc_hours}h"
             
         return f"Error fetching project group: {response.status_code}"
+
+@mcp.tool()
+async def upload_timecards_via_csv(csv_text_content: str) -> str:
+    """
+    Use this tool to upload new timecards to the database via CSV.
+    Read the local CSV file from the workspace, and pass its raw text content into this tool's 'csv_text_content' parameter.
+    """
     
+    # We create a dictionary formatted for httpx's multipart/form-data upload.
+    # We name the virtual file "timecards.csv" and encode the raw text back to bytes.
+    files = {
+        'file': ('timecards.csv', csv_text_content.encode('utf-8'), 'text/csv')
+    }
+    
+    # NOTE: When sending files, we DO NOT send standard headers like 'Content-Type: application/json'.
+    # httpx will automatically generate the correct multipart boundary headers.
+    # If you have an Authorization header, you must keep it, but strip out Content-Type if you defined it globally.
+    upload_headers = {k: v for k, v in HEADERS.items() if k.lower() != 'content-type'}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{DJANGO_API_URL}/timecards/upload_csv/", 
+            files=files,
+            headers=upload_headers
+        )
+        
+        if response.status_code == 200:
+            return f"Success: {response.json().get('status', 'Imported')}"
+        
+        return f"Error uploading CSV: {response.status_code} - {response.text}"
 
 if __name__ == "__main__":
     # Change transport from stdio to SSE, and bind to 0.0.0.0 for Docker

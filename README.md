@@ -1,7 +1,8 @@
 # budget-mcp
+
 a simple MCP server to connect to the budget app
 
-## set-up
+## set-up and usage for development
 
 ```sh
 python3 -m venv ../budget-mcp-env
