@@ -1,5 +1,7 @@
 import httpx
 import os
+import urllib.parse
+
 from mcp.server.fastmcp import FastMCP
 
 # Initialize the FastMCP server
@@ -119,6 +121,45 @@ async def get_project_group_details(group_id: int) -> str:
             return f"Project Group: {data['name']} (ID: {data['id']})\nTotal Hours Across All Projects: {calc_hours}h"
             
         return f"Error fetching project group: {response.status_code}"
+
+@mcp.tool()
+async def get_project_group_timecards(group_id: int, start_date: str = None, end_date: str = None) -> str:
+    """
+    Fetch a list of timecards for a specific project group ID. 
+    Optionally provide a start_date and/or end_date in 'YYYY-MM-DD' format to filter the results.
+    """
+    # Build the query parameters dynamically based on what the AI provides
+    query_params = {}
+    if start_date:
+        query_params['start_date'] = start_date
+    if end_date:
+        query_params['end_date'] = end_date
+        
+    # Convert the dictionary to a URL query string (e.g., "?start_date=2026-04-01")
+    query_string = f"?{urllib.parse.urlencode(query_params)}" if query_params else ""
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{DJANGO_API_URL}/project-groups/{group_id}/timecards/{query_string}", 
+            headers=HEADERS
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if not data:
+                return f"No timecards found for project group {group_id} in that date range."
+            
+            # Format the output nicely for Cursor to read
+            formatted_timecards = []
+            for item in data:
+                formatted_timecards.append(
+                    f"- {item['timecard_id']}: {item['total_hours']}h by {item['name']} "
+                    f"on {item['start_date']} (Project: {item['project']})"
+                )
+            return "\n".join(formatted_timecards)
+            
+        return f"Error fetching group timecards: {response.status_code} - {response.text}"
 
 @mcp.tool()
 async def upload_timecards_via_csv(csv_text_content: str) -> str:
