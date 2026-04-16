@@ -1,3 +1,4 @@
+import csv
 import httpx
 import os
 import urllib.parse
@@ -123,10 +124,17 @@ async def get_project_group_details(group_id: int) -> str:
         return f"Error fetching project group: {response.status_code}"
 
 @mcp.tool()
-async def get_project_group_timecards(group_id: int, start_date: str = None, end_date: str = None) -> str:
+async def get_project_group_timecards(
+    group_id: int, 
+    start_date: str = None, 
+    end_date: str = None, 
+    export_as_csv: bool = False
+) -> str:
     """
     Fetch a list of timecards for a specific project group ID. 
     Optionally provide a start_date and/or end_date in 'YYYY-MM-DD' format to filter the results.
+    If export_as_csv is set to True, it returns the raw CSV text formatted with specific columns, 
+    which you (the AI) can then save to a local file for the user.
     """
     # Build the query parameters dynamically based on what the AI provides
     query_params = {}
@@ -150,14 +158,46 @@ async def get_project_group_timecards(group_id: int, start_date: str = None, end
             if not data:
                 return f"No timecards found for project group {group_id} in that date range."
             
-            # Format the output nicely for Cursor to read
-            formatted_timecards = []
-            for item in data:
-                formatted_timecards.append(
-                    f"- {item['timecard_id']}: {item['total_hours']}h by {item['name']} "
-                    f"on {item['start_date']} (Project: {item['project']})"
-                )
-            return "\n".join(formatted_timecards)
+            # --- NEW CSV EXPORT LOGIC ---
+            if export_as_csv:
+                # Create an in-memory string buffer to hold our CSV data
+                output = io.StringIO()
+                writer = csv.writer(output)
+                
+                # Write the exact headers requested
+                headers = [
+                    "Start Date", 
+                    "OPA Project", 
+                    "Total Hours", 
+                    "Milestone", 
+                    "Resource", 
+                    "Timecard Notes"
+                ]
+                writer.writerow(headers)
+                
+                # Write the rows mapping the Django JSON response to the CSV columns
+                for item in data:
+                    writer.writerow([
+                        item.get('start_date', ''),
+                        item.get('project', ''),    # Mapped to Oracle Project ID
+                        item.get('total_hours', ''),
+                        item.get('milestone', ''),  # Mapped to Milestone name
+                        item.get('name', ''),       # Mapped to Resource
+                        item.get('notes', '')       # Mapped to Timecard Notes
+                    ])
+                
+                # Return the raw CSV string block
+                return output.getvalue()
+                
+            # --- STANDARD LIST LOGIC ---
+            else:
+                formatted_timecards = []
+                for item in data:
+                    formatted_timecards.append(
+                        f"- {item['timecard_id']}: {item['total_hours']}h by {item['name']} "
+                        f"on {item['start_date']} (Project Oracle ID: {item['project']})"
+                    )
+                return "\n".join(formatted_timecards)
             
         return f"Error fetching group timecards: {response.status_code} - {response.text}"
 
@@ -192,5 +232,5 @@ async def upload_timecards_via_csv(csv_text_content: str) -> str:
         return f"Error uploading CSV: {response.status_code} - {response.text}"
 
 if __name__ == "__main__":
-    # Change transport from stdio to SSE, and bind to 0.0.0.0 for Docker
+    
     mcp.run(transport="sse")
