@@ -26,10 +26,18 @@ async def get_project_details(oracle_id: int) -> str:
         )
         if response.status_code == 200:
             data = response.json()
-            # If you used Method 2 (adding the field to the ProjectSerializer), 
-            # you can include it right here:
             calc_hours = data.get('calculated_total_hours', 'Not calculated')
-            return f"Project: {data['name']}, Budget: {data['calculated_total_hours']}h, Logged via Timecards: {calc_hours}h"
+
+
+            # Format the output using the new serializer fields
+            return (
+                f"Project: {data.get('name')} (Oracle ID: {data.get('oracle_id')})\n"
+                f"Type: {data.get('type')}\n"
+                f"Timeline: {data.get('start_date')} to {data.get('end_date')}\n"
+                f"Sold Hours: {data.get('sold_hours')}h\n"
+                f"Logged via Timecards: {calc_hours}h\n"
+                f"Record Last Modified: {data.get('modified')}"
+            )
         return f"Error fetching project: {response.status_code}"
 
 @mcp.tool()
@@ -125,6 +133,43 @@ async def get_project_group_details(group_id: int) -> str:
         return f"Error fetching project group: {response.status_code}"
 
 @mcp.tool()
+async def get_project_group_projects(group_id: int) -> str:
+    """
+    Fetch a list of all projects that belong to a specific Project Group.
+    Provide the group_id to see the project Oracle IDs, names, timelines, and hour balances.
+    """
+    async with httpx.AsyncClient() as client:
+        # The URL matches the @action you created: /api/project-groups/{id}/projects/
+        response = await client.get(
+            f"{DJANGO_API_URL}/project-groups/{group_id}/projects/", 
+            headers=HEADERS
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Handle Django's pagination structure (if active)
+            items = data.get('results', data) if isinstance(data, dict) else data
+            
+            if not items:
+                return f"No projects found in Project Group {group_id}."
+            
+            # Format the project data nicely for the AI
+            formatted_projects = []
+            for item in items:
+                calc_hours = item.get('calculated_total_hours', '0')
+                formatted_projects.append(
+                    f"- [{item.get('oracle_id')}] {item.get('name')} "
+                    f"| Type: {item.get('type')} "
+                    f"| Timeline: {item.get('start_date')} to {item.get('end_date')} "
+                    f"| Sold: {item.get('sold_hours')}h "
+                    f"| Logged: {calc_hours}h"
+                )
+            return "\n".join(formatted_projects)
+            
+        return f"Error fetching projects for group {group_id}: {response.status_code} - {response.text}"
+
+@mcp.tool()
 async def get_project_group_timecards(
     group_id: int, 
     start_date: str = None, 
@@ -203,35 +248,77 @@ async def get_project_group_timecards(
         return f"Error fetching group timecards: {response.status_code} - {response.text}"
 
 @mcp.tool()
-async def upload_timecards_via_csv(csv_text_content: str) -> str:
+async def get_project_milestones(project_oracle_id: str) -> str:
     """
-    Use this tool to upload new timecards to the database via CSV.
-    Read the local CSV file from the workspace, and pass its raw text content into this tool's 'csv_text_content' parameter.
+    Fetch a list of all milestones/tasks associated with a specific Project.
+    Provide the project's Oracle ID to see the tasks, sold hours, and costs.
     """
-    
-    # We create a dictionary formatted for httpx's multipart/form-data upload.
-    # We name the virtual file "timecards.csv" and encode the raw text back to bytes.
-    files = {
-        'file': ('timecards.csv', csv_text_content.encode('utf-8'), 'text/csv')
-    }
-    
-    # NOTE: When sending files, we DO NOT send standard headers like 'Content-Type: application/json'.
-    # httpx will automatically generate the correct multipart boundary headers.
-    # If you have an Authorization header, you must keep it, but strip out Content-Type if you defined it globally.
-    upload_headers = {k: v for k, v in HEADERS.items() if k.lower() != 'content-type'}
-
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{DJANGO_API_URL}/timecards/upload_csv/", 
-            files=files,
-            headers=upload_headers
+        # We use the filterset field to query milestones belonging to the project
+        response = await client.get(
+            f"{DJANGO_API_URL}/milestones/?project={project_oracle_id}", 
+            headers=HEADERS
         )
         
         if response.status_code == 200:
-            return f"Success: {response.json().get('status', 'Imported')}"
-        
-        return f"Error uploading CSV: {response.status_code} - {response.text}"
+            data = response.json()
+            
+            # Handle both paginated and unpaginated responses
+            items = data.get('results', data) if isinstance(data, dict) else data
+            
+            if not items:
+                return f"No milestones found for project {project_oracle_id}."
+            
+            # Format the milestone data nicely for Cursor AI
+            formatted_milestones = []
+            for item in items:
+                formatted_milestones.append(
+                    f"- Milestone ID: {item['id']} | Task Code: {item['task']} "
+                    f"| Name: {item['name_display']} "
+                    f"| Sold: {item['sold_hours']}h @ ${item['cost_per_hour']}/hr"
+                )
+            return "\n".join(formatted_milestones)
+            
+        return f"Error fetching milestones: {response.status_code} - {response.text}"
 
+@mcp.tool()
+async def upload_timecards_via_csv(file_path: str) -> str:
+    """
+    Upload a massive CSV file of timecards directly to the database.
+    Pass the relative file path of the CSV file in the workspace (e.g., 'data/new_hours.csv').
+    Do NOT pass the file contents.
+    """
+    # The container mounts your local directory to /workspace
+    container_path = os.path.join("/workspace", file_path)
+    
+    # Sanity check: Does the file exist?
+    if not os.path.exists(container_path):
+        return f"Error: Could not find the file at {container_path}. Make sure the path is correct."
+
+    upload_headers = {k: v for k, v in HEADERS.items() if k.lower() != 'content-type'}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Open the file directly from the disk in binary mode
+            with open(container_path, 'rb') as f:
+                # We let httpx stream the file object directly
+                files = {'file': (os.path.basename(container_path), f, 'text/csv')}
+                
+                response = await client.post(
+                    f"{DJANGO_API_URL}/timecards/upload_csv/", 
+                    files=files,
+                    headers=upload_headers,
+                    timeout=60.0 # Crucial: Give Django time to process 10,000+ rows!
+                )
+                
+            if response.status_code == 200:
+                return f"Success: {response.json().get('status', 'Imported')}"
+            
+            return f"Error uploading CSV: {response.status_code} - {response.text}"
+            
+    except Exception as e:
+        return f"Internal error reading or sending the file: {str(e)}"
+    
 if __name__ == "__main__":
     
     mcp.run(transport="sse")

@@ -1,6 +1,6 @@
 services:
   vmb-app:
-    image: quay.io/swpm/vmb
+    image: localhost/projectmanagement
     container_name: vmb
     ports:
       - 8003:8003
@@ -9,7 +9,7 @@ services:
     environment:
       - DEBUG=1
   vmb-mcp-app:
-    image: quay.io/swpm/vmb-mcp
+    image: localhost/budget-mcp
     container_name: vmb-mcp
     ports:
       - 8004:8080
@@ -21,6 +21,6 @@ services:
       - vmb-app
     # ADD THIS: Mounts your current directory (.) to /workspace inside the container
     volumes:
-      - ./:/workspace
+      - /Users/sweimann/development/dorette:/workspace
     stdin_open: true 
     tty: false
